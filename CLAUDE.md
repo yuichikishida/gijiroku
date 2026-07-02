@@ -21,6 +21,8 @@
 
 - `index.html` — 録音Webアプリ(単一ファイル、依存なし)
   - 2モード: リアルタイム文字起こし(Web Speech API / PC Chrome向け)と録音のみ(MediaRecorder / スマホ向け)
+  - リアルタイムモードは「音声も同時に録音」可能(既定ON)。認識が乱れても後からWhisperで完全版を作れる。
+    認識が途切れた際は未確定(interim)テキストを破棄せず確定として残す救済処理あり
   - 2モードともPC/スマホの両方で利用可能(スマホは録音のみを初期選択)。
     リアルタイムはWeb Speech API対応ブラウザのみ(PC Chrome/Android Chrome。iPhoneはSafariで動く場合あり)
   - スマホからはGoogleドライブアプリで「議事録/録音」へアップロードする運用

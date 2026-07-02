@@ -63,6 +63,13 @@
   }
   .microw select:focus { outline: none; border-bottom-color: var(--ink); }
 
+  /* --- also-record checkbox --- */
+  .alsorec {
+    display: flex; gap: 7px; align-items: flex-start;
+    font-size: 12px; color: var(--sub); margin-top: 14px; cursor: pointer;
+  }
+  .alsorec input { margin-top: 2px; }
+
   /* --- record control strip --- */
   .strip {
     display: flex; align-items: center; gap: 16px;
@@ -225,9 +232,12 @@
       </div>
     </div>
 
+    <label class="alsorec"><input type="checkbox" id="alsoRec" checked> 音声も同時に録音する(リアルタイムが乱れても、後からWhisperで高精度な文字起こしができます)</label>
+
     <div class="actions">
       <button class="act" id="copyBtn" disabled>全文をコピー</button>
       <button class="act" id="dlBtn" disabled>テキスト保存 (.txt)</button>
+      <button class="act" id="sttSaveBtn" disabled>録音を終了して保存</button>
       <button class="act primary" id="reportBtn" disabled>議事録プロンプトをコピー</button>
     </div>
 
@@ -399,6 +409,7 @@
 
   function buildRecognizer() {
     const r = new SR();
+    let pendingInterim = '';   // 未確定テキスト(認識が途切れた際の救済用)
     r.lang = 'ja-JP';
     r.continuous = true;
     r.interimResults = true;
@@ -409,6 +420,7 @@
         if (res.isFinal) { clearInterim(); addSegment(res[0].transcript, nowStamp()); }
         else interim += res[0].transcript;
       }
+      pendingInterim = interim;
       if (interim) showInterim(interim);
     };
     r.onerror = (e) => {
@@ -418,6 +430,8 @@
       }
     };
     r.onend = () => {
+      // 認識が途切れても未確定テキストを破棄せず、確定として残す
+      if (pendingInterim.trim()) { addSegment(pendingInterim.trim(), nowStamp()); pendingInterim = ''; }
       clearInterim();
       if (recognizing) { try { r.start(); } catch(_) {} }
     };
@@ -558,14 +572,31 @@
         recognizing = true; active = true;
         rec = buildRecognizer();
         try { rec.start(); startUI('文字起こし中'); keepAwake(true); } catch(_) {}
+        // 同時録音: リアルタイムが乱れてもWhisperで完全版を作れるよう音声も残す
+        if ($('alsoRec').checked) {
+          if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+            const ok = await startRecording();
+            if (ok) $('sttSaveBtn').disabled = false;
+          } else if (mediaRecorder.state === 'paused') {
+            mediaRecorder.resume();
+          }
+        }
       } else {
         recognizing = false; active = false;
         try { rec.stop(); } catch(_) {}
+        if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.pause();
         stopUI('一時停止'); keepAwake(false);
       }
     } else {
       // 録音モード: 開始 → 一時停止 ⇄ 再開
       if (!active) {
+        // リアルタイムモードで始めた同時録音が残っていれば、破棄せずそのまま再開する
+        if (mediaRecorder && mediaRecorder.state === 'paused') {
+          mediaRecorder.resume();
+          active = true; finishBtn.disabled = false;
+          startUI('録音中'); keepAwake(true);
+          return;
+        }
         const ok = await startRecording();
         if (!ok) return;
         active = true; finishBtn.disabled = false;
@@ -576,6 +607,20 @@
         mediaRecorder.resume(); startUI('録音中');
       }
     }
+  });
+
+  // リアルタイムモードの同時録音を終了して音声を保存
+  $('sttSaveBtn').addEventListener('click', () => {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    if (recognizing) {
+      recognizing = false; active = false;
+      try { rec.stop(); } catch(_) {}
+      stopUI('待機中'); keepAwake(false);
+    }
+    active = false;
+    try { mediaRecorder.stop(); } catch(_) {}
+    $('sttSaveBtn').disabled = true;
+    resetTimer();
   });
 
   finishBtn.addEventListener('click', () => {
