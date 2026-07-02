@@ -21,8 +21,9 @@
 
 - `index.html` — 録音Webアプリ(単一ファイル、依存なし)
   - 2モード: リアルタイム文字起こし(Web Speech API / PC Chrome向け)と録音のみ(MediaRecorder / スマホ向け)
-  - スマホ(iPhone/iPad/Android判定)は録音のみモードに固定し、リアルタイムのタブ自体を非表示。
-    スマホからはGoogleドライブアプリで「議事録/録音」へアップロードする運用
+  - 2モードともPC/スマホの両方で利用可能(スマホは録音のみを初期選択)。
+    リアルタイムはWeb Speech API対応ブラウザのみ(PC Chrome/Android Chrome。iPhoneはSafariで動く場合あり)
+  - スマホからはGoogleドライブアプリで「議事録/録音」へアップロードする運用
   - 録音モードは会議向けマイク設定(エコーキャンセル/ノイズ抑制OFF、自動ゲインON)
   - PC Chromeでは保存先フォルダを選択可能(File System Access API)。
     GoogleドライブのFile Provider経由アクセスに制限が出る場合があるため、失敗時はダウンロードにフォールバック。

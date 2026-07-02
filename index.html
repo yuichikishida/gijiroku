@@ -254,7 +254,7 @@
 
   <div class="warn" id="warnStt">
     <strong>精度について:</strong> このモードはGoogleの音声認識を使う簡易版で、マイクから離れた声・複数人の会話・小声に弱めです。<strong>精度重視なら「録音のみ」モード(Whisperで文字起こし)を推奨します。</strong><br>
-    <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。ダブルクリックで開いてマイクが許可されない場合は、ファイルのあるフォルダで <code>python3 -m http.server 8000</code> を実行し、<code>http://localhost:8000/gijiroku-recorder.html</code> を開いてください。音声はGoogleの音声認識サーバーで処理されます。
+    <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。スマホはAndroid版Chromeで動作、iPhoneはSafariで動作する場合があります(非対応の場合はその旨表示されます)。音声はGoogleなどブラウザ提供元の音声認識サーバーで処理されます。
   </div>
   <div class="warn" id="warnRec" style="display:none">
     <strong>スマホでの使い方:</strong> 録音後にダウンロードされた音声ファイルを、Googleドライブアプリで「マイドライブ &gt; 議事録 &gt; 録音」にアップロードしてください。Mac側で <code>python3 gijiroku_whisper.py --watch</code> が動いていれば自動で文字起こしされます。<br>
@@ -345,15 +345,8 @@
   tabStt.addEventListener('click', () => setMode('stt'));
   tabRec.addEventListener('click', () => setMode('rec'));
 
-  // スマホはリアルタイム文字起こし不要のため録音のみに固定(タブ自体を非表示)
-  const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
-  if (isMobile) {
-    setMode('rec');
-    document.querySelector('.tabs').style.display = 'none';
-  } else if (window.innerWidth < 560) {
-    // 画面幅が狭いだけのPCは初期モードのみ録音にする(タブは残す)
-    setMode('rec');
-  }
+  // スマホは録音のみモードを初期選択(タブは残し、リアルタイムも選択可能)
+  if (window.innerWidth < 560 || /iPhone|iPad|Android/i.test(navigator.userAgent)) setMode('rec');
 
   /* ================= 文字起こしモード ================= */
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
