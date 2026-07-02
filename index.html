@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>議事録レコーダー</title>
+<style>
+  :root {
+    --ink: #1B2A41;
+    --paper: #FAF8F3;
+    --line: #E3DFD5;
+    --rec: #D93A2B;
+    --sub: #7A7468;
+    --accent: #2E5E4E;
+    --mono: "SFMono-Regular", Consolas, "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 20px 24px 14px;
+    border-bottom: 2px solid var(--ink);
+    max-width: 860px; margin: 0 auto;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: .12em; }
+  header .date { font-family: var(--mono); font-size: 12px; color: var(--sub); }
+
+  main { max-width: 860px; margin: 0 auto; padding: 20px 24px 120px; }
+
+  /* --- mode tabs --- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button {
+    flex: 1; font-family: inherit; font-size: 13px; letter-spacing: .05em;
+    padding: 12px 10px; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; color: var(--sub);
+  }
+  .tabs button.on { border-color: var(--ink); color: var(--ink); font-weight: 700; }
+  .tabs button:disabled { opacity: .5; cursor: not-allowed; }
+  .tabs .hint { display: block; font-size: 10px; font-weight: 400; margin-top: 3px; color: var(--sub); }
+
+  /* --- meta inputs --- */
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .meta label { font-size: 11px; color: var(--sub); letter-spacing: .08em; display: block; margin-bottom: 3px; }
+  .meta input {
+    width: 100%; border: none; border-bottom: 1px solid var(--line);
+    background: transparent; padding: 6px 2px; font-size: 14px; color: var(--ink);
+    font-family: inherit;
+  }
+  .meta input:focus { outline: none; border-bottom-color: var(--ink); }
+
+  /* --- record control strip --- */
+  .strip {
+    display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; background: #fff;
+    position: sticky; top: 10px; z-index: 5;
+    box-shadow: 0 1px 4px rgba(27,42,65,.06);
+  }
+  .rec-btn {
+    width: 58px; height: 58px; border-radius: 50%;
+    border: 2px solid var(--ink); background: #fff;
+    cursor: pointer; display: grid; place-items: center;
+    transition: transform .1s ease;
+    flex-shrink: 0;
+  }
+  .rec-btn:active { transform: scale(.94); }
+  .rec-btn .dot {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--rec);
+    transition: border-radius .2s ease;
+  }
+  .rec-btn.recording { border-color: var(--rec); }
+  .rec-btn.recording .dot { border-radius: 4px; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  @media (prefers-reduced-motion: reduce) { .rec-btn.recording .dot { animation: none; } }
+
+  .strip .status { flex: 1; min-width: 0; }
+  .strip .status .state { font-size: 13px; font-weight: 700; letter-spacing: .1em; }
+  .strip .status .state.on { color: var(--rec); }
+  .strip .status .timer { font-family: var(--mono); font-size: 26px; letter-spacing: .05em; }
+
+  .wave { display: flex; align-items: flex-end; gap: 3px; height: 30px; }
+  .wave span {
+    width: 4px; background: var(--line); border-radius: 2px; height: 6px;
+    transition: height .12s ease, background .3s ease;
+  }
+  .wave.on span { background: var(--rec); }
+
+  /* --- transcript --- */
+  .transcript {
+    margin-top: 22px;
+    border-left: 3px solid var(--ink);
+    min-height: 120px;
+  }
+  .seg {
+    display: grid; grid-template-columns: 74px 1fr; gap: 10px;
+    padding: 8px 0 8px 14px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .seg .ts { font-family: var(--mono); font-size: 11px; color: var(--sub); padding-top: 4px; }
+  .seg .txt { font-size: 15px; line-height: 1.75; }
+  .seg .txt[contenteditable]:focus { outline: 1px dashed var(--accent); outline-offset: 3px; }
+  .seg.interim .txt { color: var(--sub); }
+  .empty-note { padding: 30px 16px; color: var(--sub); font-size: 13px; line-height: 1.9; }
+
+  /* --- rec mode panel --- */
+  .recpanel { margin-top: 22px; display: none; }
+  .recpanel .filelist { display: flex; flex-direction: column; gap: 8px; }
+  .recpanel .file {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 10px 14px;
+  }
+  .recpanel .file .nm { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 140px; word-break: break-all; }
+  .recpanel audio { height: 34px; max-width: 100%; }
+
+  /* --- actions --- */
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  button.act {
+    font-family: inherit; font-size: 13px; letter-spacing: .05em;
+    padding: 11px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--ink); background: #fff; color: var(--ink);
+  }
+  button.act.primary { background: var(--ink); color: var(--paper); }
+  button.act:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* --- api option --- */
+  details.api { margin-top: 28px; font-size: 13px; color: var(--sub); }
+  details.api summary { cursor: pointer; letter-spacing: .05em; }
+  details.api .box { margin-top: 10px; display: flex; gap: 8px; }
+  details.api input {
+    flex: 1; border: 1px solid var(--line); border-radius: 6px;
+    padding: 9px 10px; font-family: var(--mono); font-size: 12px; background: #fff;
+  }
+
+  /* --- report output --- */
+  .report { margin-top: 26px; display: none; }
+  .report h2 {
+    font-size: 14px; letter-spacing: .12em; border-bottom: 2px solid var(--ink);
+    padding-bottom: 6px; margin-bottom: 12px;
+  }
+  .report pre {
+    white-space: pre-wrap; font-family: inherit; font-size: 14px; line-height: 1.8;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--ink); color: var(--paper); font-size: 13px;
+    padding: 11px 20px; border-radius: 999px; opacity: 0;
+    transition: all .25s ease; pointer-events: none; max-width: 90vw; text-align: center;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+  .warn {
+    margin-top: 14px; font-size: 12px; line-height: 1.8; color: var(--sub);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: #fff;
+  }
+  .warn code { font-family: var(--mono); background: var(--paper); padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 560px) {
+    .meta { grid-template-columns: 1fr; }
+    .strip .status .timer { font-size: 20px; }
+    .wave { display: none; }
+    .seg { grid-template-columns: 58px 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>議事録レコーダー</h1>
+  <span class="date" id="today"></span>
+</header>
+
+<main>
+  <div class="tabs">
+    <button id="tabStt" class="on">リアルタイム文字起こし<span class="hint">PC・Chrome推奨</span></button>
+    <button id="tabRec">録音のみ<span class="hint">スマホ向け・後でWhisperで文字起こし</span></button>
+  </div>
+
+  <div class="meta">
+    <div>
+      <label>会議名</label>
+      <input id="mTitle" placeholder="例: 週次ミーティング">
+    </div>
+    <div>
+      <label>参加者(任意)</label>
+      <input id="mMembers" placeholder="例: 田中、佐藤、鈴木">
+    </div>
+  </div>
+
+  <div class="strip">
+    <button class="rec-btn" id="recBtn" aria-label="録音の開始と停止">
+      <span class="dot"></span>
+    </button>
+    <div class="status">
+      <div class="state" id="state">待機中</div>
+      <div class="timer" id="timer">00:00:00</div>
+    </div>
+    <div class="wave" id="wave">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <!-- 文字起こしモード -->
+  <div id="sttArea">
+    <div class="transcript" id="transcript">
+      <div class="empty-note" id="emptyNote">
+        録音ボタンを押すと文字起こしが始まります。<br>
+        発言の区切りごとにタイムスタンプ付きで記録され、各行はタップ(クリック)して手修正できます。
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="act" id="copyBtn" disabled>全文をコピー</button>
+      <button class="act" id="dlBtn" disabled>テキスト保存 (.txt)</button>
+      <button class="act primary" id="reportBtn" disabled>議事録プロンプトをコピー</button>
+    </div>
+
+    <details class="api">
+      <summary>上級者向け: Claude APIキーで議事録を直接生成する(有料・任意)</summary>
+      <div class="box">
+        <input id="apiKey" type="password" placeholder="sk-ant-...(このページ内でのみ使用・保存されません)">
+        <button class="act" id="apiGenBtn">生成</button>
+      </div>
+    </details>
+
+    <div class="report" id="report">
+      <h2>生成された議事録</h2>
+      <pre id="reportBody"></pre>
+      <div class="actions">
+        <button class="act" id="reportCopyBtn">議事録をコピー</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 録音のみモード -->
+  <div class="recpanel" id="recArea">
+    <div class="empty-note" id="recEmpty">
+      録音ボタンで開始/一時停止。「録音を終了して保存」で音声ファイルがダウンロードされます。<br>
+      録音中は画面が自動でスリープしないようにします。<strong>ブラウザを閉じたり画面をロックしないでください。</strong>
+    </div>
+    <div class="filelist" id="fileList"></div>
+    <div class="actions">
+      <button class="act primary" id="finishBtn" disabled>録音を終了して保存</button>
+    </div>
+  </div>
+
+  <div class="warn" id="warnStt">
+    <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。ダブルクリックで開いてマイクが許可されない場合は、ファイルのあるフォルダで <code>python3 -m http.server 8000</code> を実行し、<code>http://localhost:8000/gijiroku-recorder.html</code> を開いてください。音声はGoogleの音声認識サーバーで処理されます。
+  </div>
+  <div class="warn" id="warnRec" style="display:none">
+    <strong>スマホでの注意:</strong> ブラウザ録音は画面ロックやアプリ切替で止まることがあります(特にiPhone)。録音中はこの画面を開いたままにしてください。会議中にスマホで他の作業をしたい場合は、標準のボイスメモアプリで録音し、音声ファイルだけ後でWhisperに渡す運用が確実です。録音データは端末内で完結し、外部送信されません。
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const recBtn = $('recBtn'), stateEl = $('state'), timerEl = $('timer');
+  const transcriptEl = $('transcript'), emptyNote = $('emptyNote'), wave = $('wave');
+  const copyBtn = $('copyBtn'), dlBtn = $('dlBtn'), reportBtn = $('reportBtn');
+  const finishBtn = $('finishBtn');
+
+  $('today').textContent = new Date().toLocaleDateString('ja-JP', { year:'numeric', month:'long', day:'numeric', weekday:'short' });
+
+  /* ================= 共通 ================= */
+  let mode = 'stt';               // 'stt' | 'rec'
+  let active = false;             // 録音/認識が動作中(一時停止含むセッション中)か
+  let running = false;            // いま実際に動いているか
+  let startTime = 0, elapsedBase = 0, timerId = null, waveId = null;
+
+  function fmt(sec) {
+    const h = String(Math.floor(sec/3600)).padStart(2,'0');
+    const m = String(Math.floor(sec%3600/60)).padStart(2,'0');
+    const s = String(Math.floor(sec%60)).padStart(2,'0');
+    return `${h}:${m}:${s}`;
+  }
+  function nowStamp() { return fmt((Date.now()-startTime)/1000 + elapsedBase); }
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._id); t._id = setTimeout(() => t.classList.remove('show'), 3000);
+  }
+  function startUI(label) {
+    running = true;
+    recBtn.classList.add('recording');
+    stateEl.textContent = label; stateEl.classList.add('on');
+    wave.classList.add('on');
+    startTime = Date.now();
+    timerId = setInterval(() => { timerEl.textContent = fmt((Date.now()-startTime)/1000 + elapsedBase); }, 500);
+    waveId = setInterval(() => {
+      wave.querySelectorAll('span').forEach(s => s.style.height = (6 + Math.random()*24) + 'px');
+    }, 140);
+  }
+  function stopUI(label) {
+    running = false;
+    recBtn.classList.remove('recording');
+    stateEl.textContent = label; stateEl.classList.remove('on');
+    wave.classList.remove('on');
+    elapsedBase += (Date.now()-startTime)/1000;
+    clearInterval(timerId); clearInterval(waveId);
+    wave.querySelectorAll('span').forEach(s => s.style.height = '6px');
+  }
+  function resetTimer() {
+    elapsedBase = 0; timerEl.textContent = '00:00:00';
+  }
+
+  /* 画面スリープ防止 */
+  let wakeLock = null;
+  async function keepAwake(on) {
+    try {
+      if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+      else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch(_) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && active && !wakeLock) keepAwake(true);
+  });
+
+  /* ================= モード切替 ================= */
+  const tabStt = $('tabStt'), tabRec = $('tabRec');
+  function setMode(m) {
+    if (active) { toast('録音中はモードを切り替えられません'); return; }
+    mode = m;
+    tabStt.classList.toggle('on', m === 'stt');
+    tabRec.classList.toggle('on', m === 'rec');
+    $('sttArea').style.display = m === 'stt' ? 'block' : 'none';
+    $('recArea').style.display = m === 'rec' ? 'block' : 'none';
+    $('warnStt').style.display = m === 'stt' ? 'block' : 'none';
+    $('warnRec').style.display = m === 'rec' ? 'block' : 'none';
+    stateEl.textContent = '待機中';
+    resetTimer();
+  }
+  tabStt.addEventListener('click', () => setMode('stt'));
+  tabRec.addEventListener('click', () => setMode('rec'));
+
+  // スマホっぽい画面幅なら録音モードを初期表示
+  if (window.innerWidth < 560 || /iPhone|Android/i.test(navigator.userAgent)) setMode('rec');
+
+  /* ================= 文字起こしモード ================= */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognizing = false, rec = null;
+  let segments = [];
+  let interimEl = null;
+
+  function addSegment(text, stamp) {
+    if (!text.trim()) return;
+    segments.push({ time: stamp, text: text.trim() });
+    const div = document.createElement('div');
+    div.className = 'seg';
+    div.innerHTML = `<div class="ts">${stamp}</div><div class="txt" contenteditable="true"></div>`;
+    div.querySelector('.txt').textContent = text.trim();
+    div.querySelector('.txt').addEventListener('input', e => {
+      const idx = [...transcriptEl.querySelectorAll('.seg:not(.interim)')].indexOf(div);
+      if (idx > -1) segments[idx].text = e.target.textContent;
+    });
+    transcriptEl.appendChild(div);
+    div.scrollIntoView({ block: 'nearest' });
+    emptyNote.style.display = 'none';
+    [copyBtn, dlBtn, reportBtn].forEach(b => b.disabled = false);
+  }
+  function showInterim(text) {
+    if (!interimEl) {
+      interimEl = document.createElement('div');
+      interimEl.className = 'seg interim';
+      interimEl.innerHTML = `<div class="ts">…</div><div class="txt"></div>`;
+      transcriptEl.appendChild(interimEl);
+    }
+    interimEl.querySelector('.txt').textContent = text;
+    interimEl.scrollIntoView({ block: 'nearest' });
+  }
+  function clearInterim() { if (interimEl) { interimEl.remove(); interimEl = null; } }
+
+  function buildRecognizer() {
+    const r = new SR();
+    r.lang = 'ja-JP';
+    r.continuous = true;
+    r.interimResults = true;
+    r.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) { clearInterim(); addSegment(res[0].transcript, nowStamp()); }
+        else interim += res[0].transcript;
+      }
+      if (interim) showInterim(interim);
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        recognizing = false; active = false; stopUI('マイク不許可'); keepAwake(false);
+        toast('マイクが許可されていません。localhostでの起動をお試しください');
+      }
+    };
+    r.onend = () => {
+      clearInterim();
+      if (recognizing) { try { r.start(); } catch(_) {} }
+    };
+    return r;
+  }
+
+  /* ================= 録音のみモード ================= */
+  let mediaRecorder = null, mediaStream = null, chunks = [];
+  let recCount = 0;
+
+  function pickMime() {
+    const cands = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+    for (const c of cands) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+    return '';
+  }
+
+  async function startRecording() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(_) {
+      toast('マイクが許可されていません'); return false;
+    }
+    const mime = pickMime();
+    chunks = [];
+    mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : undefined);
+    mediaRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const type = mediaRecorder.mimeType || 'audio/webm';
+      const ext = type.includes('mp4') ? 'm4a' : 'webm';
+      const blob = new Blob(chunks, { type });
+      mediaStream.getTracks().forEach(t => t.stop());
+      saveRecording(blob, ext);
+    };
+    mediaRecorder.start(1000); // 1秒ごとにデータ確保(クラッシュ耐性)
+    return true;
+  }
+
+  function saveRecording(blob, ext) {
+    recCount++;
+    const m = meta();
+    const name = `録音_${m.title.replaceAll(/[\\/:*?"<>|]/g,'')}_${m.date.replaceAll('/','-')}_${recCount}.${ext}`;
+    const url = URL.createObjectURL(blob);
+    // 自動ダウンロード
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    // 画面にも残す(再ダウンロード・確認用)
+    $('recEmpty').style.display = 'none';
+    const div = document.createElement('div');
+    div.className = 'file';
+    div.innerHTML = `<span class="nm"></span><audio controls></audio><button class="act">再保存</button>`;
+    div.querySelector('.nm').textContent = `${name}(${(blob.size/1024/1024).toFixed(1)} MB)`;
+    div.querySelector('audio').src = url;
+    div.querySelector('button').addEventListener('click', () => {
+      const b = document.createElement('a'); b.href = url; b.download = name; b.click();
+    });
+    $('fileList').appendChild(div);
+    toast('音声ファイルを保存しました');
+  }
+
+  /* ================= 録音ボタン ================= */
+  recBtn.addEventListener('click', async () => {
+    if (mode === 'stt') {
+      if (!SR) { toast('このブラウザは音声認識非対応です。録音モードを使ってください'); return; }
+      if (!recognizing) {
+        recognizing = true; active = true;
+        rec = buildRecognizer();
+        try { rec.start(); startUI('文字起こし中'); keepAwake(true); } catch(_) {}
+      } else {
+        recognizing = false; active = false;
+        try { rec.stop(); } catch(_) {}
+        stopUI('一時停止'); keepAwake(false);
+      }
+    } else {
+      // 録音モード: 開始 → 一時停止 ⇄ 再開
+      if (!active) {
+        const ok = await startRecording();
+        if (!ok) return;
+        active = true; finishBtn.disabled = false;
+        startUI('録音中'); keepAwake(true);
+      } else if (running) {
+        mediaRecorder.pause(); stopUI('一時停止');
+      } else {
+        mediaRecorder.resume(); startUI('録音中');
+      }
+    }
+  });
+
+  finishBtn.addEventListener('click', () => {
+    if (!active || mode !== 'rec') return;
+    if (running) stopUI('保存済み'); else stateEl.textContent = '保存済み';
+    active = false; finishBtn.disabled = true;
+    keepAwake(false);
+    resetTimer();
+    try { mediaRecorder.stop(); } catch(_) {}
+  });
+
+  /* ================= 出力系 ================= */
+  function fullText() {
+    return segments.map(s => `[${s.time}] ${s.text}`).join('\n');
+  }
+  function meta() {
+    const title = $('mTitle').value.trim() || '会議';
+    const members = $('mMembers').value.trim();
+    const date = new Date().toLocaleDateString('ja-JP');
+    return { title, members, date };
+  }
+
+  copyBtn.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(fullText());
+    toast('全文をコピーしました');
+  });
+
+  dlBtn.addEventListener('click', () => {
+    const m = meta();
+    const blob = new Blob([`会議名: ${m.title}\n日付: ${m.date}\n参加者: ${m.members || '-'}\n\n${fullText()}`], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `文字起こし_${m.title}_${m.date.replaceAll('/','-')}.txt`;
+    a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  function buildPrompt() {
+    const m = meta();
+    return `以下は会議の文字起こしです。これをもとに議事録を作成してください。
+
+# 会議情報
+- 会議名: ${m.title}
+- 日付: ${m.date}
+${m.members ? `- 参加者: ${m.members}` : ''}
+
+# 議事録の形式
+1. 会議の概要(3行以内)
+2. 主な議題と議論の内容
+3. 決定事項(箇条書き)
+4. TODO・アクションアイテム(担当者と期限が読み取れれば併記)
+5. 次回への持ち越し・未解決事項
+
+音声認識の誤変換と思われる箇所は文脈から補正してください。
+
+# 文字起こし全文
+${fullText()}`;
+  }
+
+  reportBtn.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(buildPrompt());
+    toast('コピーしました。Claudeのチャットに貼り付けてください');
+  });
+
+  /* --- 任意: Claude API直接生成(APIキー必要・有料) --- */
+  $('apiGenBtn').addEventListener('click', async () => {
+    const key = $('apiKey').value.trim();
+    if (!key) { toast('APIキーを入力してください'); return; }
+    if (!segments.length) { toast('文字起こしがありません'); return; }
+    $('apiGenBtn').disabled = true; $('apiGenBtn').textContent = '生成中…';
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: buildPrompt() }]
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+      $('reportBody').textContent = text;
+      $('report').style.display = 'block';
+      $('report').scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+      toast('生成に失敗しました: ' + err.message);
+    } finally {
+      $('apiGenBtn').disabled = false; $('apiGenBtn').textContent = '生成';
+    }
+  });
+
+  $('reportCopyBtn').addEventListener('click', async () => {
+    await navigator.clipboard.writeText($('reportBody').textContent);
+    toast('議事録をコピーしました');
+  });
+
+  window.addEventListener('beforeunload', (e) => {
+    if (segments.length || active) { e.preventDefault(); e.returnValue = ''; }
+  });
+})();
+</script>
+</body>
+</html>
