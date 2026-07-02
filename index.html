@@ -53,6 +53,16 @@
   }
   .meta input:focus { outline: none; border-bottom-color: var(--ink); }
 
+  /* --- mic selector --- */
+  .microw { margin-top: 14px; }
+  .microw label { font-size: 11px; color: var(--sub); letter-spacing: .08em; display: block; margin-bottom: 3px; }
+  .microw select {
+    width: 100%; border: none; border-bottom: 1px solid var(--line);
+    background: transparent; padding: 6px 2px; font-size: 14px; color: var(--ink);
+    font-family: inherit;
+  }
+  .microw select:focus { outline: none; border-bottom-color: var(--ink); }
+
   /* --- record control strip --- */
   .strip {
     display: flex; align-items: center; gap: 16px;
@@ -245,6 +255,10 @@
       PCのChromeでは「保存先フォルダを選択」でGoogleドライブの「議事録/録音」を選んでおくと、保存と同時にWhisperの処理対象になります(未選択の場合はダウンロードされます)。<br>
       録音中は画面が自動でスリープしないようにします。<strong>ブラウザを閉じたり画面をロックしないでください。</strong>
     </div>
+    <div class="microw">
+      <label>使用マイク(iPhoneのマイクが勝手に選ばれる場合はここで内蔵マイクを指定)</label>
+      <select id="micSel"><option value="">既定のマイク</option></select>
+    </div>
     <div class="filelist" id="fileList"></div>
     <div class="actions">
       <button class="act" id="dirBtn">保存先フォルダを選択</button>
@@ -254,7 +268,8 @@
 
   <div class="warn" id="warnStt">
     <strong>精度について:</strong> このモードはGoogleの音声認識を使う簡易版で、マイクから離れた声・複数人の会話・小声に弱めです。<strong>精度重視なら「録音のみ」モード(Whisperで文字起こし)を推奨します。</strong><br>
-    <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。スマホはAndroid版Chromeで動作、iPhoneはSafariで動作する場合があります(非対応の場合はその旨表示されます)。音声はGoogleなどブラウザ提供元の音声認識サーバーで処理されます。
+    <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。スマホはAndroid版Chromeで動作、iPhoneはSafariで動作する場合があります(非対応の場合はその旨表示されます)。音声はGoogleなどブラウザ提供元の音声認識サーバーで処理されます。<br>
+    <strong>マイクについて:</strong> このモードは仕組み上、システム既定のマイクが使われます。MacでiPhoneのマイクが勝手に使われる場合は、macOSの「システム設定 &gt; サウンド &gt; 入力」で内蔵マイクを選ぶか、Chromeの「設定 &gt; プライバシー &gt; マイク」で変更してください(録音のみモードなら画面内で選択できます)。
   </div>
   <div class="warn" id="warnRec" style="display:none">
     <strong>スマホでの使い方:</strong> 録音後にダウンロードされた音声ファイルを、Googleドライブアプリで「マイドライブ &gt; 議事録 &gt; 録音」にアップロードしてください。Mac側で <code>python3 gijiroku_whisper.py --watch</code> が動いていれば自動で文字起こしされます。<br>
@@ -413,6 +428,41 @@
   let mediaRecorder = null, mediaStream = null, chunks = [];
   let recCount = 0;
 
+  /* 使用マイクの選択(macOSの連係機能でiPhoneのマイクが既定になる対策) */
+  const micSel = $('micSel');
+  let micPermAsked = false;
+
+  async function refreshMics() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    const devs = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    const mics = devs.filter(d => d.kind === 'audioinput');
+    const saved = localStorage.getItem('gijiroku_mic') || '';
+    micSel.innerHTML = '<option value="">既定のマイク</option>';
+    mics.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || `マイク ${i + 1}`;
+      if (saved && d.deviceId === saved) o.selected = true;
+      micSel.appendChild(o);
+    });
+  }
+
+  // デバイス名はマイク許可後にしか取得できないため、初回操作時に許可を取ってから一覧を出す
+  micSel.addEventListener('mousedown', async () => {
+    if (micPermAsked) return;
+    micPermAsked = true;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+    } catch(_) {}
+    refreshMics();
+  });
+  micSel.addEventListener('change', () => localStorage.setItem('gijiroku_mic', micSel.value));
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', refreshMics);
+  }
+  refreshMics();
+
   function pickMime() {
     const cands = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
     for (const c of cands) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
@@ -422,9 +472,10 @@
   async function startRecording() {
     try {
       // 通話向けのエコーキャンセル/ノイズ抑制は会議室の離れた声を消すことがあるためOFF
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }
-      });
+      const audioPrefs = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+      if (micSel.value) audioPrefs.deviceId = { exact: micSel.value };  // 指定マイクを優先
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioPrefs });
+      refreshMics(); // 許可が取れたのでデバイス名を最新化
     } catch(_) {
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });

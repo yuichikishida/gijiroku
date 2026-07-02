@@ -25,6 +25,9 @@
     リアルタイムはWeb Speech API対応ブラウザのみ(PC Chrome/Android Chrome。iPhoneはSafariで動く場合あり)
   - スマホからはGoogleドライブアプリで「議事録/録音」へアップロードする運用
   - 録音モードは会議向けマイク設定(エコーキャンセル/ノイズ抑制OFF、自動ゲインON)
+  - 録音モードは使用マイクを画面内で選択可能(選択はlocalStorageに保存)。
+    macOSの連係機能でiPhoneのマイクが既定になってしまう問題への対策。
+    リアルタイムモードはWeb Speech APIの仕様上マイク選択不可(システム既定を使用)
   - PC Chromeでは保存先フォルダを選択可能(File System Access API)。
     GoogleドライブのFile Provider経由アクセスに制限が出る場合があるため、失敗時はダウンロードにフォールバック。
     Macで録音→Drive「議事録/録音」に直接保存→Whisper自動処理、の全Mac完結フローが可能
