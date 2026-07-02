@@ -110,7 +110,15 @@ def load_gemini_key():
 
 def generate_minutes(prompt: str, api_key: str) -> str:
     import json
+    import ssl
     import urllib.request
+
+    # python.org版Pythonは証明書が未設定のことがあるため、certifiがあればそれを使う
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     req = urllib.request.Request(
@@ -118,7 +126,7 @@ def generate_minutes(prompt: str, api_key: str) -> str:
         data=json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8"),
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
     )
-    with urllib.request.urlopen(req, timeout=300) as res:
+    with urllib.request.urlopen(req, timeout=300, context=ctx) as res:
         data = json.load(res)
     parts = data["candidates"][0]["content"]["parts"]
     return "".join(p.get("text", "") for p in parts)
