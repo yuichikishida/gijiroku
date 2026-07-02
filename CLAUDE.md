@@ -22,6 +22,10 @@
 - `index.html` — 録音Webアプリ(単一ファイル、依存なし)
   - 2モード: リアルタイム文字起こし(Web Speech API / PC Chrome向け)と録音のみ(MediaRecorder / スマホ向け)
   - スマホ判定で録音モードを初期選択
+  - 録音モードは会議向けマイク設定(エコーキャンセル/ノイズ抑制OFF、自動ゲインON)
+  - PC Chromeでは保存先フォルダを選択可能(File System Access API)。
+    GoogleドライブのFile Provider経由アクセスに制限が出る場合があるため、失敗時はダウンロードにフォールバック。
+    Macで録音→Drive「議事録/録音」に直接保存→Whisper自動処理、の全Mac完結フローが可能
   - Wake Lockで録音中の画面スリープ防止
   - 議事録プロンプト生成(クリップボードコピー → Claudeチャットに貼る運用)
   - 任意: Claude APIキー直接生成モード(`anthropic-dangerous-direct-browser-access`ヘッダ使用)

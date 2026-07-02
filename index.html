@@ -178,8 +178,8 @@
 
 <main>
   <div class="tabs">
-    <button id="tabStt" class="on">リアルタイム文字起こし<span class="hint">PC・Chrome推奨</span></button>
-    <button id="tabRec">録音のみ<span class="hint">スマホ向け・後でWhisperで文字起こし</span></button>
+    <button id="tabStt" class="on">リアルタイム文字起こし<span class="hint">簡易・精度低め</span></button>
+    <button id="tabRec">録音のみ<span class="hint">高精度・Whisperで文字起こし</span></button>
   </div>
 
   <div class="meta">
@@ -241,16 +241,19 @@
   <!-- 録音のみモード -->
   <div class="recpanel" id="recArea">
     <div class="empty-note" id="recEmpty">
-      録音ボタンで開始/一時停止。「録音を終了して保存」で音声ファイルがダウンロードされます。<br>
+      録音ボタンで開始/一時停止。「録音を終了して保存」で音声ファイルが保存されます。<br>
+      PCのChromeでは「保存先フォルダを選択」でGoogleドライブの「議事録/録音」を選んでおくと、保存と同時にWhisperの処理対象になります(未選択の場合はダウンロードされます)。<br>
       録音中は画面が自動でスリープしないようにします。<strong>ブラウザを閉じたり画面をロックしないでください。</strong>
     </div>
     <div class="filelist" id="fileList"></div>
     <div class="actions">
+      <button class="act" id="dirBtn">保存先フォルダを選択</button>
       <button class="act primary" id="finishBtn" disabled>録音を終了して保存</button>
     </div>
   </div>
 
   <div class="warn" id="warnStt">
+    <strong>精度について:</strong> このモードはGoogleの音声認識を使う簡易版で、マイクから離れた声・複数人の会話・小声に弱めです。<strong>精度重視なら「録音のみ」モード(Whisperで文字起こし)を推奨します。</strong><br>
     <strong>動作環境:</strong> PC版Chrome推奨(Web Speech API使用)。ダブルクリックで開いてマイクが許可されない場合は、ファイルのあるフォルダで <code>python3 -m http.server 8000</code> を実行し、<code>http://localhost:8000/gijiroku-recorder.html</code> を開いてください。音声はGoogleの音声認識サーバーで処理されます。
   </div>
   <div class="warn" id="warnRec" style="display:none">
@@ -417,9 +420,16 @@
 
   async function startRecording() {
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 通話向けのエコーキャンセル/ノイズ抑制は会議室の離れた声を消すことがあるためOFF
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }
+      });
     } catch(_) {
-      toast('マイクが許可されていません'); return false;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch(_) {
+        toast('マイクが許可されていません'); return false;
+      }
     }
     const mime = pickMime();
     chunks = [];
@@ -436,14 +446,46 @@
     return true;
   }
 
+  /* 保存先フォルダ(PC Chrome向け: File System Access API)
+     Googleドライブの「議事録/録音」を選んでおくと保存と同時にWhisperの処理対象になる */
+  let saveDir = null;
+  const dirBtn = $('dirBtn');
+  if (!window.showDirectoryPicker) {
+    dirBtn.style.display = 'none';
+  } else {
+    dirBtn.addEventListener('click', async () => {
+      try {
+        saveDir = await window.showDirectoryPicker({ mode: 'readwrite' });
+        dirBtn.textContent = `保存先: ${saveDir.name}`;
+        toast('録音はこのフォルダに直接保存されます');
+      } catch(_) { /* キャンセル時は何もしない */ }
+    });
+  }
+
+  async function writeToDir(blob, name) {
+    const fh = await saveDir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+  }
+
+  function download(url, name) {
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+  }
+
   function saveRecording(blob, ext) {
     recCount++;
     const m = meta();
     const name = `録音_${m.title.replaceAll(/[\\/:*?"<>|]/g,'')}_${m.date.replaceAll('/','-')}_${recCount}.${ext}`;
     const url = URL.createObjectURL(blob);
-    // 自動ダウンロード
-    const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
+    if (saveDir) {
+      writeToDir(blob, name)
+        .then(() => toast(`「${saveDir.name}」に保存しました`))
+        .catch(() => { download(url, name); toast('フォルダ保存に失敗したためダウンロードしました'); });
+    } else {
+      download(url, name);
+    }
     // 画面にも残す(再ダウンロード・確認用)
     $('recEmpty').style.display = 'none';
     const div = document.createElement('div');
@@ -451,11 +493,9 @@
     div.innerHTML = `<span class="nm"></span><audio controls></audio><button class="act">再保存</button>`;
     div.querySelector('.nm').textContent = `${name}(${(blob.size/1024/1024).toFixed(1)} MB)`;
     div.querySelector('audio').src = url;
-    div.querySelector('button').addEventListener('click', () => {
-      const b = document.createElement('a'); b.href = url; b.download = name; b.click();
-    });
+    div.querySelector('button').addEventListener('click', () => download(url, name));
     $('fileList').appendChild(div);
-    toast('音声ファイルを保存しました');
+    if (!saveDir) toast('音声ファイルを保存しました');
   }
 
   /* ================= 録音ボタン ================= */
