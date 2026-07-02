@@ -34,7 +34,8 @@
     GoogleドライブのFile Provider経由アクセスに制限が出る場合があるため、失敗時はダウンロードにフォールバック。
     Macで録音→Drive「議事録/録音」に直接保存→Whisper自動処理、の全Mac完結フローが可能
   - Wake Lockで録音中の画面スリープ防止
-  - 議事録プロンプト生成(クリップボードコピー → Claudeチャットに貼る運用)
+  - 議事録のその場生成: Gemini API(gemini-2.5-flash、無料枠あり)。キーはlocalStorageに保存
+  - 議事録プロンプト生成も残置(クリップボードコピー → Claudeチャットに貼る運用)
   - 任意: Claude APIキー直接生成モード(`anthropic-dangerous-direct-browser-access`ヘッダ使用)
   - サーバー送信なし・ブラウザ内完結
 - `gijiroku_whisper.py` — 文字起こしスクリプト(M1 Mac用)
@@ -43,6 +44,8 @@
   - 出力: `議事録/文字起こし/` に「_文字起こし.txt」と「_議事録プロンプト.txt」
   - 処理済み音声は `録音/処理済み/` へ移動
   - `--watch` で常駐監視(60秒間隔)
+  - Gemini APIキー設定時(env `GEMINI_API_KEY` または `gemini_api_key.txt`・gitignore済み)は
+    「_議事録.md」まで自動生成。未設定なら文字起こしのみ
   - 依存: `brew install ffmpeg`, `pip3 install mlx-whisper`
 
 ## デプロイ
@@ -54,7 +57,7 @@
 
 ## 設計上の決定事項と理由
 
-- **無料運用が最優先**。文字起こしはWeb Speech API(無料)とローカルWhisper(無料)。議事録生成はClaude Proのチャットに貼る運用でAPI費用ゼロ
+- **無料運用が最優先**。文字起こしはWeb Speech API(無料)とローカルWhisper(無料)。議事録生成はGemini APIの無料枠(または従来のClaudeチャット貼り付け)でAPI費用ゼロ
 - Google Cloud STTは不採用(有料: 無料枠60分/月、以降約$0.016/分)。将来精度が必要になれば再検討
 - スマホのブラウザ録音は画面ロック/アプリ切替で止まる制約あり(特にiOS)。会議中にスマホで他作業をしたい場合は標準ボイスメモで録音し、音声だけDriveに上げる運用も許容する
 - 音声データを外部サービスに出さない構成(ローカルWhisper)は、クライアント提供時のセキュリティ説明上の強みとして意図的に選択

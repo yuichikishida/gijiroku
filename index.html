@@ -238,14 +238,19 @@
       <button class="act" id="copyBtn" disabled>全文をコピー</button>
       <button class="act" id="dlBtn" disabled>テキスト保存 (.txt)</button>
       <button class="act" id="sttSaveBtn" disabled>録音を終了して保存</button>
-      <button class="act primary" id="reportBtn" disabled>議事録プロンプトをコピー</button>
+      <button class="act" id="reportBtn" disabled>議事録プロンプトをコピー</button>
+      <button class="act primary" id="genBtn" disabled>議事録を生成</button>
     </div>
 
-    <details class="api">
-      <summary>上級者向け: Claude APIキーで議事録を直接生成する(有料・任意)</summary>
+    <details class="api" id="apiBox">
+      <summary>議事録生成のAPIキー設定(Gemini推奨・無料枠あり)</summary>
       <div class="box">
-        <input id="apiKey" type="password" placeholder="sk-ant-...(このページ内でのみ使用・保存されません)">
-        <button class="act" id="apiGenBtn">生成</button>
+        <input id="gemKey" type="password" placeholder="Gemini APIキー(AIza...)。aistudio.google.comで無料発行">
+        <button class="act" id="gemGenBtn">Geminiで生成</button>
+      </div>
+      <div class="box">
+        <input id="apiKey" type="password" placeholder="Claude APIキー sk-ant-...(有料・任意。保存されません)">
+        <button class="act" id="apiGenBtn">Claudeで生成</button>
       </div>
     </details>
 
@@ -393,7 +398,7 @@
     transcriptEl.appendChild(div);
     div.scrollIntoView({ block: 'nearest' });
     emptyNote.style.display = 'none';
-    [copyBtn, dlBtn, reportBtn].forEach(b => b.disabled = false);
+    [copyBtn, dlBtn, reportBtn, $('genBtn')].forEach(b => b.disabled = false);
   }
   function showInterim(text) {
     if (!interimEl) {
@@ -684,6 +689,48 @@ ${fullText()}`;
     toast('コピーしました。Claudeのチャットに貼り付けてください');
   });
 
+  /* --- 議事録のその場生成(Gemini API・無料枠あり) --- */
+  const gemKeyEl = $('gemKey');
+  gemKeyEl.value = localStorage.getItem('gijiroku_gemkey') || '';
+  gemKeyEl.addEventListener('change', () => localStorage.setItem('gijiroku_gemkey', gemKeyEl.value.trim()));
+
+  function showReport(text) {
+    $('reportBody').textContent = text;
+    $('report').style.display = 'block';
+    $('report').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  async function generateGemini(btn) {
+    const key = gemKeyEl.value.trim();
+    if (!key) {
+      $('apiBox').open = true;
+      gemKeyEl.focus();
+      toast('Gemini APIキーを設定してください(aistudio.google.com で無料発行できます)');
+      return;
+    }
+    if (!segments.length) { toast('文字起こしがありません'); return; }
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '生成中…';
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: buildPrompt() }] }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = (((data.candidates || [])[0] || {}).content?.parts || []).map(p => p.text || '').join('');
+      if (!text) throw new Error('応答が空でした');
+      showReport(text);
+    } catch (err) {
+      toast('生成に失敗しました: ' + err.message);
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+  $('genBtn').addEventListener('click', () => generateGemini($('genBtn')));
+  $('gemGenBtn').addEventListener('click', () => generateGemini($('gemGenBtn')));
+
   /* --- 任意: Claude API直接生成(APIキー必要・有料) --- */
   $('apiGenBtn').addEventListener('click', async () => {
     const key = $('apiKey').value.trim();
@@ -708,9 +755,7 @@ ${fullText()}`;
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
       const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
-      $('reportBody').textContent = text;
-      $('report').style.display = 'block';
-      $('report').scrollIntoView({ behavior: 'smooth' });
+      showReport(text);
     } catch (err) {
       toast('生成に失敗しました: ' + err.message);
     } finally {
