@@ -338,13 +338,23 @@ def process_once(rec_dir: str, drive: str) -> int:
     return count
 
 
+def ensure_ffmpeg() -> None:
+    """ffmpegの場所を自動検出してPATHに足す(ターミナルのPATH設定に依存しない)。"""
+    if shutil.which("ffmpeg"):
+        return
+    for cand in ("/opt/homebrew/bin", "/usr/local/bin"):
+        if os.path.isfile(os.path.join(cand, "ffmpeg")):
+            os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
+            return
+    sys.exit("エラー: ffmpeg が見つかりません。`brew install ffmpeg` を実行してください。")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="議事録の文字起こし(ローカルWhisper)")
     parser.add_argument("--watch", action="store_true", help="常駐監視モード(60秒間隔)")
     args = parser.parse_args()
 
-    if shutil.which("ffmpeg") is None:
-        sys.exit("エラー: ffmpeg が見つかりません。`brew install ffmpeg` を実行してください。")
+    ensure_ffmpeg()
 
     drive = find_drive_root()
     rec_dir = os.path.join(drive, "議事録", "録音")
