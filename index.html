@@ -63,6 +63,9 @@
   }
   .microw select:focus { outline: none; border-bottom-color: var(--ink); }
 
+  /* --- drive save bar --- */
+  .drivebar { margin-bottom: 16px; }
+
   /* --- also-record checkbox --- */
   .alsorec {
     display: flex; gap: 7px; align-items: flex-start;
@@ -210,6 +213,10 @@
     </div>
   </div>
 
+  <div class="drivebar">
+    <button class="act" id="dirBtn">保存先: Googleドライブの「議事録」フォルダを選択</button>
+  </div>
+
   <div class="strip">
     <button class="rec-btn" id="recBtn" aria-label="録音の開始と停止">
       <span class="dot"></span>
@@ -267,7 +274,7 @@
   <div class="recpanel" id="recArea">
     <div class="empty-note" id="recEmpty">
       録音ボタンで開始/一時停止。「録音を終了して保存」で音声ファイルが保存されます。<br>
-      PCのChromeでは「保存先フォルダを選択」でGoogleドライブの「議事録/録音」を選んでおくと、保存と同時にWhisperの処理対象になります(未選択の場合はダウンロードされます)。<br>
+      PCのChromeでは上部の「保存先」でGoogleドライブの「議事録」フォルダを選んでおくと、録音・文字起こし・議事録がすべてDriveに直接保存されます(未選択の場合はダウンロードされます)。<br>
       録音中は画面が自動でスリープしないようにします。<strong>ブラウザを閉じたり画面をロックしないでください。</strong>
     </div>
     <div class="microw">
@@ -276,7 +283,6 @@
     </div>
     <div class="filelist" id="fileList"></div>
     <div class="actions">
-      <button class="act" id="dirBtn">保存先フォルダを選択</button>
       <button class="act primary" id="finishBtn" disabled>録音を終了して保存</button>
     </div>
   </div>
@@ -517,27 +523,79 @@
     return true;
   }
 
-  /* 保存先フォルダ(PC Chrome向け: File System Access API)
-     Googleドライブの「議事録/録音」を選んでおくと保存と同時にWhisperの処理対象になる */
+  /* ============ 保存先(Googleドライブの「議事録」フォルダ) ============
+     PC ChromeのFile System Access APIで「議事録」フォルダを一度選ぶと、
+     録音は「録音」サブフォルダ、文字起こし・議事録は「文字起こし」サブフォルダに
+     直接保存される。ハンドルはIndexedDBに記憶し、次回以降は再選択不要。 */
   let saveDir = null;
   const dirBtn = $('dirBtn');
-  if (!window.showDirectoryPicker) {
-    dirBtn.style.display = 'none';
-  } else {
-    dirBtn.addEventListener('click', async () => {
-      try {
-        saveDir = await window.showDirectoryPicker({ mode: 'readwrite' });
-        dirBtn.textContent = `保存先: ${saveDir.name}`;
-        toast('録音はこのフォルダに直接保存されます');
-      } catch(_) { /* キャンセル時は何もしない */ }
+
+  function idbOpen() {
+    return new Promise((ok, ng) => {
+      const q = indexedDB.open('gijiroku', 1);
+      q.onupgradeneeded = () => q.result.createObjectStore('handles');
+      q.onsuccess = () => ok(q.result);
+      q.onerror = () => ng(q.error);
+    });
+  }
+  async function idbSet(key, val) {
+    const db = await idbOpen();
+    return new Promise((ok, ng) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(val, key);
+      tx.oncomplete = ok; tx.onerror = () => ng(tx.error);
+    });
+  }
+  async function idbGet(key) {
+    const db = await idbOpen();
+    return new Promise((ok, ng) => {
+      const rq = db.transaction('handles').objectStore('handles').get(key);
+      rq.onsuccess = () => ok(rq.result); rq.onerror = () => ng(rq.error);
     });
   }
 
-  async function writeToDir(blob, name) {
-    const fh = await saveDir.getFileHandle(name, { create: true });
-    const w = await fh.createWritable();
-    await w.write(blob);
-    await w.close();
+  function updateDriveUI() {
+    dirBtn.textContent = saveDir
+      ? `保存先: ${saveDir.name}(録音・文字起こし・議事録はDriveへ)`
+      : '保存先: Googleドライブの「議事録」フォルダを選択';
+  }
+
+  async function ensureDrivePerm() {
+    if (!saveDir) return false;
+    if (await saveDir.queryPermission({ mode: 'readwrite' }) === 'granted') return true;
+    return (await saveDir.requestPermission({ mode: 'readwrite' })) === 'granted';
+  }
+
+  // サブフォルダ('録音' or '文字起こし')にファイルを保存。成功でtrueを返す
+  async function saveToDrive(sub, name, blob) {
+    try {
+      if (!(await ensureDrivePerm())) return false;
+      const dir = await saveDir.getDirectoryHandle(sub, { create: true });
+      const fh = await dir.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      await w.write(blob);
+      await w.close();
+      return true;
+    } catch(_) { return false; }
+  }
+
+  if (!window.showDirectoryPicker) {
+    dirBtn.style.display = 'none';   // スマホ等ではダウンロード+Driveアプリでアップロード運用
+  } else {
+    idbGet('driveDir').then(h => { if (h) { saveDir = h; updateDriveUI(); } }).catch(() => {});
+    dirBtn.addEventListener('click', async () => {
+      try {
+        const h = await window.showDirectoryPicker({ mode: 'readwrite' });
+        if (h.name === '録音' || h.name === '文字起こし') {
+          toast('その親の「議事録」フォルダを選んでください'); return;
+        }
+        saveDir = h;
+        idbSet('driveDir', h).catch(() => {});
+        updateDriveUI();
+        toast(`「${h.name}」内の録音/文字起こしフォルダに自動保存されます`);
+      } catch(_) { /* キャンセル時は何もしない */ }
+    });
+    updateDriveUI();
   }
 
   function download(url, name) {
@@ -551,9 +609,10 @@
     const name = `録音_${m.title.replaceAll(/[\\/:*?"<>|]/g,'')}_${m.date.replaceAll('/','-')}_${recCount}.${ext}`;
     const url = URL.createObjectURL(blob);
     if (saveDir) {
-      writeToDir(blob, name)
-        .then(() => toast(`「${saveDir.name}」に保存しました`))
-        .catch(() => { download(url, name); toast('フォルダ保存に失敗したためダウンロードしました'); });
+      saveToDrive('録音', name, blob).then(ok => {
+        if (ok) toast(`Drive「${saveDir.name}/録音」に保存しました`);
+        else { download(url, name); toast('Drive保存に失敗したためダウンロードしました'); }
+      });
     } else {
       download(url, name);
     }
@@ -653,12 +712,16 @@
     toast('全文をコピーしました');
   });
 
-  dlBtn.addEventListener('click', () => {
+  dlBtn.addEventListener('click', async () => {
     const m = meta();
     const blob = new Blob([`会議名: ${m.title}\n日付: ${m.date}\n参加者: ${m.members || '-'}\n\n${fullText()}`], { type: 'text/plain' });
+    const name = `文字起こし_${m.title}_${m.date.replaceAll('/','-')}.txt`;
+    if (saveDir && await saveToDrive('文字起こし', name, blob)) {
+      toast(`Drive「${saveDir.name}/文字起こし」に保存しました`); return;
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `文字起こし_${m.title}_${m.date.replaceAll('/','-')}.txt`;
+    a.download = name;
     a.click(); URL.revokeObjectURL(a.href);
   });
 
@@ -698,6 +761,13 @@ ${fullText()}`;
     $('reportBody').textContent = text;
     $('report').style.display = 'block';
     $('report').scrollIntoView({ behavior: 'smooth' });
+    // 生成した議事録はDriveにも自動保存する
+    if (saveDir) {
+      const m = meta();
+      const name = `${m.title}_議事録_${m.date.replaceAll('/','-')}.md`;
+      saveToDrive('文字起こし', name, new Blob([text], { type: 'text/markdown' }))
+        .then(ok => { if (ok) toast(`議事録をDrive「${saveDir.name}/文字起こし」に保存しました`); });
+    }
   }
 
   async function generateGemini(btn) {

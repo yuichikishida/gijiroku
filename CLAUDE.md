@@ -30,9 +30,10 @@
   - 録音モードは使用マイクを画面内で選択可能(選択はlocalStorageに保存)。
     macOSの連係機能でiPhoneのマイクが既定になってしまう問題への対策。
     リアルタイムモードはWeb Speech APIの仕様上マイク選択不可(システム既定を使用)
-  - PC Chromeでは保存先フォルダを選択可能(File System Access API)。
-    GoogleドライブのFile Provider経由アクセスに制限が出る場合があるため、失敗時はダウンロードにフォールバック。
-    Macで録音→Drive「議事録/録音」に直接保存→Whisper自動処理、の全Mac完結フローが可能
+  - PC Chromeでは保存先にGoogleドライブの「議事録」フォルダを一度選ぶと(File System Access API)、
+    録音は「録音」サブフォルダ、文字起こしテキスト・生成議事録は「文字起こし」サブフォルダに直接保存。
+    フォルダハンドルはIndexedDBに記憶され再選択不要。失敗時・未選択時はダウンロードにフォールバック。
+    Macで録音→Drive直接保存→Whisper自動処理、の全Mac完結フローが可能
   - Wake Lockで録音中の画面スリープ防止
   - 議事録のその場生成: Gemini API(gemini-2.5-flash、無料枠あり)。キーはlocalStorageに保存
   - 議事録プロンプト生成も残置(クリップボードコピー → Claudeチャットに貼る運用)
