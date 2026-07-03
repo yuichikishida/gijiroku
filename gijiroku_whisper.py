@@ -75,15 +75,48 @@ def find_drive_root() -> str:
     )
 
 
+# ---- 用語集(人名・社名・専門用語の認識精度向上用) ---------------------
+
+GLOSSARY_TEMPLATE = """# 用語集: 会議によく出る人名・社名・専門用語を1行に1つ書いてください
+# この内容はWhisperの音声認識と議事録生成の両方に使われ、固有名詞の精度が上がります
+# 「#」で始まる行と空行は無視されます
+#
+# 例:
+# 岸田
+# 誠和堂
+# フィラリア
+"""
+
+
+def load_glossary(drive: str) -> str:
+    """議事録/用語集.txt を読み、用語を「、」区切りで返す。無ければテンプレートを作る。"""
+    path = os.path.join(drive, "議事録", "用語集.txt")
+    if not os.path.isfile(path):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(GLOSSARY_TEMPLATE)
+            print(f"用語集のテンプレートを作成しました: {path}")
+        except OSError:
+            pass
+        return ""
+    with open(path, encoding="utf-8") as f:
+        terms = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+    return "、".join(terms)
+
+
 # ---- 議事録プロンプト(index.html の buildPrompt と同じ形式) ----------
 
-def build_prompt(title: str, date: str, text: str) -> str:
+def build_prompt(title: str, date: str, text: str, glossary: str = "") -> str:
+    gl = (
+        f"\n# 人名・用語の表記\n以下の表記に統一し、音声認識の誤変換と思われる箇所を補正してください:\n{glossary}\n"
+        if glossary else ""
+    )
     return f"""以下は会議の文字起こしです。これをもとに議事録を作成してください。
 
 # 会議情報
 - 会議名: {title}
 - 日付: {date}
-
+{gl}
 # 議事録の形式
 1. 会議の概要(3行以内)
 2. 主な議題と議論の内容
@@ -236,7 +269,13 @@ def transcribe_file(audio_path: str, drive: str) -> None:
     print(f"文字起こし開始: {os.path.basename(audio_path)}")
     start = time.time()
 
-    result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=MODEL)
+    # 用語集があればinitial_promptで語彙を注入(固有名詞の認識精度向上)
+    glossary = load_glossary(drive)
+    opts = {}
+    if glossary:
+        opts["initial_prompt"] = f"この会議には次の人物・用語が登場します: {glossary[:300]}。"
+
+    result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=MODEL, **opts)
     text = result["text"].strip()
 
     mtime = datetime.datetime.fromtimestamp(os.path.getmtime(audio_path))
@@ -249,7 +288,7 @@ def transcribe_file(audio_path: str, drive: str) -> None:
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(f"会議名: {title}\n日付: {date}\n\n{text}\n")
     with open(prompt_path, "w", encoding="utf-8") as f:
-        f.write(build_prompt(title, date, text))
+        f.write(build_prompt(title, date, text, glossary))
 
     # 音声も会議フォルダへ移動(全データを1フォルダに集約)
     shutil.move(audio_path, os.path.join(session_dir, os.path.basename(audio_path)))
@@ -264,7 +303,7 @@ def transcribe_file(audio_path: str, drive: str) -> None:
         return
     try:
         print("議事録を生成中(Gemini)…")
-        minutes = generate_minutes(build_prompt(title, date, text), api_key)
+        minutes = generate_minutes(build_prompt(title, date, text, glossary), api_key)
         md_path = os.path.join(session_dir, "議事録.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(minutes)

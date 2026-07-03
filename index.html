@@ -65,6 +65,7 @@
 
   /* --- drive save bar --- */
   .drivebar { margin-bottom: 16px; }
+  .drivebar .act.unset { border-color: var(--rec); color: var(--rec); font-weight: 700; }
 
   /* --- also-record checkbox --- */
   .alsorec {
@@ -557,7 +558,8 @@
   function updateDriveUI() {
     dirBtn.textContent = saveDir
       ? `保存先: ${saveDir.name}(録音・文字起こし・議事録はDriveへ)`
-      : '保存先: Googleドライブの「議事録」フォルダを選択';
+      : '⚠ 保存先が未設定です: Googleドライブの「議事録」フォルダを選択';
+    dirBtn.classList.toggle('unset', !saveDir);
   }
 
   async function ensureDrivePerm() {
@@ -743,14 +745,27 @@
     a.click(); URL.revokeObjectURL(a.href);
   });
 
-  function buildPrompt() {
+  /* Driveの議事録/用語集.txt(人名・専門用語)を読む。保存先未設定などで読めなければ空 */
+  async function readGlossary() {
+    try {
+      if (!saveDir || !(await ensureDrivePerm())) return '';
+      const fh = await saveDir.getFileHandle('用語集.txt');
+      const text = await (await fh.getFile()).text();
+      return text.split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#')).join('、');
+    } catch(_) { return ''; }
+  }
+
+  function buildPrompt(glossary = '') {
     const m = meta();
+    const gl = glossary
+      ? `\n# 人名・用語の表記\n以下の表記に統一し、音声認識の誤変換と思われる箇所を補正してください:\n${glossary}\n`
+      : '';
     return `以下は会議の文字起こしです。これをもとに議事録を作成してください。
 
 # 会議情報
 - 会議名: ${m.title}
 - 日付: ${m.date}
-${m.members ? `- 参加者: ${m.members}` : ''}
+${m.members ? `- 参加者: ${m.members}` : ''}${gl}
 
 # 議事録の形式
 1. 会議の概要(3行以内)
@@ -766,7 +781,7 @@ ${fullText()}`;
   }
 
   reportBtn.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(buildPrompt());
+    await navigator.clipboard.writeText(buildPrompt(await readGlossary()));
     toast('コピーしました。Claudeのチャットに貼り付けてください');
   });
 
@@ -805,12 +820,23 @@ ${fullText()}`;
     $('reportBody').textContent = text;
     $('report').style.display = 'block';
     $('report').scrollIntoView({ behavior: 'smooth' });
-    // 生成した議事録は会議フォルダにMarkdown+Word形式で自動保存する
+    // 生成した議事録は必ずファイルとして残す(Drive保存、不可ならWordをダウンロード)
+    const downloadDoc = () => {
+      const url = URL.createObjectURL(docBlob(text));
+      download(url, `議事録_${meta().title}_${meta().date.replaceAll('/','-')}.doc`);
+    };
     if (saveDir) {
       const folder = sessionName();
-      saveToDrive(folder, '議事録(リアルタイム).md', new Blob([text], { type: 'text/markdown' }));
-      saveToDrive(folder, '議事録(リアルタイム).doc', docBlob(text))
-        .then(ok => { if (ok) toast(`議事録をDrive「${saveDir.name}/${folder}」に保存しました`); });
+      Promise.all([
+        saveToDrive(folder, '議事録(リアルタイム).md', new Blob([text], { type: 'text/markdown' })),
+        saveToDrive(folder, '議事録(リアルタイム).doc', docBlob(text))
+      ]).then(([mdOk, docOk]) => {
+        if (mdOk && docOk) toast(`議事録をDrive「${saveDir.name}/${folder}」に保存しました`);
+        else { downloadDoc(); toast('Drive保存に失敗したためWordファイルをダウンロードしました'); }
+      });
+    } else {
+      downloadDoc();
+      toast('保存先が未設定のためWordファイルをダウンロードしました。上部の「保存先」でDriveの議事録フォルダを選ぶと自動保存されます');
     }
   }
 
@@ -829,7 +855,7 @@ ${fullText()}`;
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents: [{ parts: [{ text: buildPrompt() }] }] })
+        body: JSON.stringify({ contents: [{ parts: [{ text: buildPrompt(await readGlossary()) }] }] })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
@@ -863,7 +889,7 @@ ${fullText()}`;
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 4000,
-          messages: [{ role: 'user', content: buildPrompt() }]
+          messages: [{ role: 'user', content: buildPrompt(await readGlossary()) }]
         })
       });
       const data = await res.json();
