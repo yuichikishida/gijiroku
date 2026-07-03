@@ -9,13 +9,30 @@
 
 ```
 [録音]                    [文字起こし]              [議事録生成]
-スマホ or PC              M1 MacBook               Claude
-ブラウザアプリ    ──→     mlx-whisper      ──→    プロンプト貼り付け
-(index.html)             (gijiroku_whisper.py)    (現状は手動・無料)
+スマホ or PC              M1 MacBook               Gemini API(無料枠)
+ブラウザアプリ    ──→     mlx-whisper      ──→    md + docx 自動生成
+(index.html)             (gijiroku_whisper.py)    (またはClaudeチャット貼り付け)
         │                        ↑
         └── Googleドライブ ──────┘
-            議事録/録音 → 議事録/文字起こし
+            議事録/録音(受信箱)→ 議事録/日付_時刻_会議名/ に全データ集約
 ```
+
+## データ構成(Googleドライブ)
+
+```
+議事録/
+├── 録音/                          ← 受信箱。音声を入れると自動処理される
+└── 2026-07-03_1430_週次ミーティング/  ← 会議ごとに自動作成
+    ├── 〈音声ファイル〉             ← 処理後ここへ移動
+    ├── 文字起こし.txt
+    ├── 議事録プロンプト.txt
+    ├── 議事録.md
+    └── 議事録.docx                 ← Word/Googleドキュメントで開ける
+```
+
+ブラウザアプリの録音は「YYYY-MM-DD_HHMM_会議名_録音N.拡張子」で命名され、
+Whisperスクリプトが同じ日時・会議名のフォルダに合流する(リアルタイムモードの
+保存物「リアルタイム文字起こし.txt」「議事録(リアルタイム).md/.doc」も同フォルダ)。
 
 ## ファイル構成
 
@@ -41,12 +58,11 @@
   - サーバー送信なし・ブラウザ内完結
 - `gijiroku_whisper.py` — 文字起こしスクリプト(M1 Mac用)
   - `mlx-whisper` + モデル `mlx-community/whisper-large-v3-turbo`
-  - Google Drive for desktopの同期フォルダ `マイドライブ/議事録/録音` を監視
-  - 出力: `議事録/文字起こし/` に「_文字起こし.txt」と「_議事録プロンプト.txt」
-  - 処理済み音声は `録音/処理済み/` へ移動
+  - Google Drive for desktopの同期フォルダ `マイドライブ/議事録/録音`(受信箱)を監視
+  - 会議フォルダ `議事録/日付_時刻_会議名/` を自動作成し、文字起こし・プロンプト・議事録・音声を集約
   - `--watch` で常駐監視(60秒間隔)
   - Gemini APIキー設定時(env `GEMINI_API_KEY` または `gemini_api_key.txt`・gitignore済み)は
-    「_議事録.md」まで自動生成。未設定なら文字起こしのみ
+    議事録.mdと議事録.docx(macOS標準textutilで変換)まで自動生成。未設定なら文字起こしのみ
   - 依存: `brew install ffmpeg`, `pip3 install mlx-whisper`
 
 ## デプロイ

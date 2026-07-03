@@ -274,7 +274,7 @@
   <div class="recpanel" id="recArea">
     <div class="empty-note" id="recEmpty">
       録音ボタンで開始/一時停止。「録音を終了して保存」で音声ファイルが保存されます。<br>
-      PCのChromeでは上部の「保存先」でGoogleドライブの「議事録」フォルダを選んでおくと、録音・文字起こし・議事録がすべてDriveに直接保存されます(未選択の場合はダウンロードされます)。<br>
+      PCのChromeでは上部の「保存先」でGoogleドライブの「議事録」フォルダを選んでおくと、会議ごとに「日付_時刻_会議名」フォルダが自動で作られ、録音・文字起こし・議事録(Word形式含む)がすべてそこに集約されます(未選択の場合はダウンロードされます)。<br>
       録音中は画面が自動でスリープしないようにします。<strong>ブラウザを閉じたり画面をロックしないでください。</strong>
     </div>
     <div class="microw">
@@ -605,8 +605,8 @@
 
   function saveRecording(blob, ext) {
     recCount++;
-    const m = meta();
-    const name = `録音_${m.title.replaceAll(/[\\/:*?"<>|]/g,'')}_${m.date.replaceAll('/','-')}_${recCount}.${ext}`;
+    // Whisperスクリプトが会議フォルダ名を復元できる命名(YYYY-MM-DD_HHMM_会議名_録音N)
+    const name = `${sessionName()}_録音${recCount > 1 ? recCount : ''}.${ext}`;
     const url = URL.createObjectURL(blob);
     if (saveDir) {
       saveToDrive('録音', name, blob).then(ok => {
@@ -633,6 +633,7 @@
     if (mode === 'stt') {
       if (!SR) { toast('このブラウザは音声認識非対応です。録音モードを使ってください'); return; }
       if (!recognizing) {
+        newSessionIfDone();
         recognizing = true; active = true;
         rec = buildRecognizer();
         try { rec.start(); startUI('文字起こし中'); keepAwake(true); } catch(_) {}
@@ -654,6 +655,7 @@
     } else {
       // 録音モード: 開始 → 一時停止 ⇄ 再開
       if (!active) {
+        newSessionIfDone();
         // リアルタイムモードで始めた同時録音が残っていれば、破棄せずそのまま再開する
         if (mediaRecorder && mediaRecorder.state === 'paused') {
           mediaRecorder.resume();
@@ -684,6 +686,7 @@
     active = false;
     try { mediaRecorder.stop(); } catch(_) {}
     $('sttSaveBtn').disabled = true;
+    sessionDone = true;   // 次の開始からは新しい会議フォルダになる
     resetTimer();
   });
 
@@ -694,6 +697,7 @@
     keepAwake(false);
     resetTimer();
     try { mediaRecorder.stop(); } catch(_) {}
+    sessionDone = true;   // 次の開始からは新しい会議フォルダになる
   });
 
   /* ================= 出力系 ================= */
@@ -707,6 +711,21 @@
     return { title, members, date };
   }
 
+  /* 会議フォルダ名「日付_時刻_会議名」。セッション開始時に日時を固定し、
+     録音・文字起こし・議事録が全部同じフォルダに集まるようにする。
+     Whisperスクリプト側も同じ命名規則で合流する */
+  let sessionStamp = null, sessionDone = false;
+  function sessionName() {
+    if (!sessionStamp) {
+      const d = new Date(), p = n => String(n).padStart(2, '0');
+      sessionStamp = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    }
+    return `${sessionStamp}_${meta().title}`.replaceAll(/[\\/:*?"<>|]/g, '');
+  }
+  function newSessionIfDone() {
+    if (sessionDone) { sessionStamp = null; sessionDone = false; }
+  }
+
   copyBtn.addEventListener('click', async () => {
     await navigator.clipboard.writeText(fullText());
     toast('全文をコピーしました');
@@ -715,13 +734,12 @@
   dlBtn.addEventListener('click', async () => {
     const m = meta();
     const blob = new Blob([`会議名: ${m.title}\n日付: ${m.date}\n参加者: ${m.members || '-'}\n\n${fullText()}`], { type: 'text/plain' });
-    const name = `文字起こし_${m.title}_${m.date.replaceAll('/','-')}.txt`;
-    if (saveDir && await saveToDrive('文字起こし', name, blob)) {
-      toast(`Drive「${saveDir.name}/文字起こし」に保存しました`); return;
+    if (saveDir && await saveToDrive(sessionName(), 'リアルタイム文字起こし.txt', blob)) {
+      toast(`Drive「${saveDir.name}/${sessionName()}」に保存しました`); return;
     }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = name;
+    a.download = `文字起こし_${m.title}_${m.date.replaceAll('/','-')}.txt`;
     a.click(); URL.revokeObjectURL(a.href);
   });
 
@@ -757,16 +775,42 @@ ${fullText()}`;
   gemKeyEl.value = localStorage.getItem('gijiroku_gemkey') || '';
   gemKeyEl.addEventListener('change', () => localStorage.setItem('gijiroku_gemkey', gemKeyEl.value.trim()));
 
+  /* 議事録MarkdownをWord/Googleドキュメントで開ける.docに変換する */
+  function mdToHtml(md) {
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const out = []; let inList = false;
+    const close = () => { if (inList) { out.push('</ul>'); inList = false; } };
+    for (const raw of md.split('\n')) {
+      const line = raw.trim();
+      const e = esc(line).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+      if (!line) close();
+      else if (line.startsWith('### ')) { close(); out.push(`<h3>${e.slice(4)}</h3>`); }
+      else if (line.startsWith('## ')) { close(); out.push(`<h2>${e.slice(3)}</h2>`); }
+      else if (line.startsWith('# ')) { close(); out.push(`<h1>${e.slice(2)}</h1>`); }
+      else if (line === '---' || line === '***') { close(); out.push('<hr>'); }
+      else if (line.startsWith('* ') || line.startsWith('- ')) {
+        if (!inList) { out.push('<ul>'); inList = true; }
+        out.push(`<li>${e.slice(2)}</li>`);
+      }
+      else { close(); out.push(`<p>${e}</p>`); }
+    }
+    close();
+    return `<html><head><meta charset="utf-8"></head><body>${out.join('\n')}</body></html>`;
+  }
+  function docBlob(md) {
+    return new Blob(['\ufeff', mdToHtml(md)], { type: 'application/msword' });
+  }
+
   function showReport(text) {
     $('reportBody').textContent = text;
     $('report').style.display = 'block';
     $('report').scrollIntoView({ behavior: 'smooth' });
-    // 生成した議事録はDriveにも自動保存する
+    // 生成した議事録は会議フォルダにMarkdown+Word形式で自動保存する
     if (saveDir) {
-      const m = meta();
-      const name = `${m.title}_議事録_${m.date.replaceAll('/','-')}.md`;
-      saveToDrive('文字起こし', name, new Blob([text], { type: 'text/markdown' }))
-        .then(ok => { if (ok) toast(`議事録をDrive「${saveDir.name}/文字起こし」に保存しました`); });
+      const folder = sessionName();
+      saveToDrive(folder, '議事録(リアルタイム).md', new Blob([text], { type: 'text/markdown' }));
+      saveToDrive(folder, '議事録(リアルタイム).doc', docBlob(text))
+        .then(ok => { if (ok) toast(`議事録をDrive「${saveDir.name}/${folder}」に保存しました`); });
     }
   }
 
